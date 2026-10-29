@@ -3,51 +3,79 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Floci Upload Demo</title>
-  <style>
-    body { font-family: system-ui, sans-serif; max-width: 640px; margin: 40px auto; padding: 0 16px; color: #222; }
-    form { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; padding: 16px; border: 1px dashed #aaa; border-radius: 8px; }
-    button { padding: 8px 16px; cursor: pointer; }
-    .result { margin-top: 16px; padding: 12px; background: #f4f6f8; border-radius: 8px; word-break: break-all; }
-    .result img { max-width: 100%; margin-top: 8px; border-radius: 6px; }
-    .error { color: #b00020; }
-  </style>
+  <title>Floci File Storage</title>
+  <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <h1>Upload a file</h1>
-  <p>The file is stored in Floci S3 and you get back a link served by this app.</p>
+  <header>
+    <div>
+      <h1>File storage</h1>
+      <p class="muted">Files are stored in Floci S3. Links are served by this app.</p>
+    </div>
+    <div class="status">
+      <span id="health" class="dot" title="Checking..."></span>
+      <span id="stats" class="muted">Loading...</span>
+    </div>
+  </header>
 
-  <form id="form">
-    <input type="file" name="file" accept="image/jpeg,image/png,image/webp,application/pdf" required>
-    <button type="submit">Upload</button>
-  </form>
+  <section class="panel network">
+    <div>
+      <strong>Network</strong>
+      <span id="network-info" class="muted">Detecting...</span>
+    </div>
+    <label>
+      Image quality
+      <select id="quality-mode">
+        <option value="auto">Auto (by network)</option>
+        <option value="low">Low: 320px, q50</option>
+        <option value="medium">Medium: 640px, q70</option>
+        <option value="high">High: up to 1600px, q85</option>
+      </select>
+    </label>
+    <span id="profile-info" class="badge"></span>
+  </section>
 
-  <div id="results"></div>
+  <section class="panel">
+    <label id="dropzone" class="dropzone">
+      <input id="file-input" type="file" multiple accept="image/jpeg,image/png,image/webp,application/pdf">
+      <strong>Drop files here or click to choose</strong>
+      <span id="limits" class="muted">JPEG, PNG, WEBP or PDF</span>
+    </label>
+    <label class="check">
+      <input id="compress" type="checkbox" checked>
+      Compress photos in the browser before upload (max 2048px)
+    </label>
+    <ul id="queue" class="queue"></ul>
+  </section>
 
-  <script>
-    const form = document.getElementById('form');
-    const results = document.getElementById('results');
+  <section>
+    <h2>Gallery</h2>
+    <div id="gallery" class="gallery"></div>
+    <p id="empty" class="muted" hidden>No files yet. Upload one above.</p>
+    <button id="load-more" hidden>Load more</button>
+  </section>
 
-    form.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const box = document.createElement('div');
-      box.className = 'result';
-      box.textContent = 'Uploading...';
-      results.prepend(box);
+  <dialog id="viewer">
+    <div class="viewer-head">
+      <strong id="viewer-title"></strong>
+      <button id="viewer-close" aria-label="Close">✕</button>
+    </div>
+    <div id="viewer-stage" class="viewer-stage">
+      <img id="viewer-img" alt="">
+    </div>
+    <div class="viewer-controls">
+      <span>Load as:</span>
+      <button data-profile="low">Low</button>
+      <button data-profile="medium">Medium</button>
+      <button data-profile="high">High</button>
+      <button data-profile="original">Original</button>
+    </div>
+    <p id="viewer-info" class="muted"></p>
+    <code id="viewer-url"></code>
+  </dialog>
 
-      const res = await fetch('/upload', { method: 'POST', body: new FormData(form) });
-      const data = await res.json();
-      if (!res.ok) {
-        box.innerHTML = `<span class="error">${data.error}</span>`;
-        return;
-      }
-      box.innerHTML = `<strong>Stored.</strong> Link: <a href="${data.link}" target="_blank">${data.link}</a>
-        <br><small>${data.type}, ${(data.size / 1024).toFixed(1)} KB</small>`;
-      if (data.type.startsWith('image/')) {
-        box.innerHTML += `<br><img src="${data.link}" alt="uploaded image">`;
-      }
-      form.reset();
-    });
-  </script>
+  <div id="toast" class="toast" hidden></div>
+
+  <script src="app.js" type="module"></script>
 </body>
 </html>
