@@ -1,0 +1,30 @@
+services:
+  floci:
+    image: floci/floci:2.0.1
+    # No "ports:" on purpose. Floci is reachable only from the app container on this
+    # private Docker network, never from your browser or the internet.
+    environment:
+      FLOCI_STORAGE_MODE: memory
+      FLOCI_STORAGE_SERVICES_S3_MODE: wal
+      FLOCI_STORAGE_PERSISTENT_PATH: /app/data
+    volumes:
+      - floci-data:/app/data
+    restart: unless-stopped
+
+  app:
+    build: ./app
+    ports:
+      - "3000:3000"
+    environment:
+      S3_ENDPOINT: http://floci:4566
+      S3_BUCKET: demo-uploads
+      AWS_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+    depends_on:
+      floci:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  floci-data:
