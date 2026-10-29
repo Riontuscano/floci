@@ -11,7 +11,9 @@ const list = (name, fallback) =>
     .sort((a, b) => a - b);
 
 export const config = {
-  port: int('PORT', 3000),
+  port: int('PORT', 6100),
+  // Comma-separated CIDR ranges allowed to use the app, e.g. "192.168.1.0/24". Empty allows all.
+  allowedNetworks: (process.env.ALLOWED_NETWORKS ?? '').split(',').map((v) => v.trim()).filter(Boolean),
   dbPath: process.env.DB_PATH ?? './data/files.db',
 
   s3: {
@@ -23,6 +25,9 @@ export const config = {
   upload: {
     maxFileMb: int('MAX_UPLOAD_MB', 15),
     maxFilesPerRequest: int('MAX_FILES_PER_REQUEST', 10),
+    // Total size of stored originals after which uploads are refused. 0 disables the limit.
+    // Resized copies are not counted, so leave headroom (about 20%) below the real free space.
+    quotaBytes: Math.round(Number.parseFloat(process.env.STORAGE_QUOTA_GB ?? '0') * 1024 ** 3) || 0,
   },
 
   images: {

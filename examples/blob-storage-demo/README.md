@@ -4,7 +4,7 @@ Upload photos and PDFs, store them in Floci S3, and get a link back. Images can 
 through the link, and the page picks a smaller or larger image depending on network speed.
 
 ```
-Browser ──> app (Node, port 3000) ──> Floci S3   (file bytes: originals + resized copies)
+Browser ──> app (Node, port 6100) ──> Floci S3   (file bytes: originals + resized copies)
                      │
                      └──> SQLite                 (file list: name, size, type, date)
 ```
@@ -19,7 +19,7 @@ Browser ──> app (Node, port 3000) ──> Floci S3   (file bytes: originals 
 docker compose up -d --build
 ```
 
-Open http://localhost:3000.
+Open http://localhost:6100.
 
 To deploy on a server in your network, follow [DEPLOY.md](DEPLOY.md).
 
@@ -88,7 +88,7 @@ You can also choose Low, Medium or High by hand, in the page and in the viewer.
 Upload from the command line:
 
 ```bash
-curl -F "files=@photo.jpg" -F "files=@scan.pdf" http://localhost:3000/api/files
+curl -F "files=@photo.jpg" -F "files=@scan.pdf" http://localhost:6100/api/files
 ```
 
 Errors: `413` file too large, `415` wrong type (reported per file), `404` unknown file.
@@ -99,12 +99,18 @@ Copy `.env.example` to `.env` to change anything. All values are optional.
 
 | Setting | Default | Meaning |
 |---|---|---|
-| `APP_PORT` | `3000` | Port on the host. `192.168.1.206:3000` binds to one network address only |
+| `APP_PORT` | `6100` | Port on the host. `192.168.1.206:6100` binds to one network address only |
+| `ALLOWED_NETWORKS` | Empty (everyone) | Comma-separated address ranges allowed to use the app, e.g. `192.168.1.0/24`. Checked against the real source address, not headers |
 | `FLOCI_DATA`, `APP_DATA` | Docker volumes | Where data lives. Use host folders on a server, see DEPLOY.md |
+| `STORAGE_QUOTA_GB` | `0` (no limit) | Uploads are refused once stored originals reach this size. Resized copies add about 20% on top |
 | `MAX_UPLOAD_MB` | `15` | Max size per file |
 | `MAX_FILES_PER_REQUEST` | `10` | Max files per upload |
 | `ALLOWED_SIZES` | `160,320,640,1024,1600` | Sizes the server may generate |
-| `MAX_CONCURRENT_RESIZES` | `2` | Parallel resize jobs |
+| `MAX_CONCURRENT_RESIZES` | `2` | Images processed at the same time (uploads and resizes) |
+| `FLOCI_MEMORY`, `APP_MEMORY` | `1g`, `512m` | Hard memory caps per container |
+| `FLOCI_CPUS`, `APP_CPUS` | `1.0`, `1.0` | CPU caps per container |
+
+Both containers also rotate their logs (3 files of 10 MB each), so logs cannot fill the disk.
 
 ## Code layout
 
@@ -114,13 +120,14 @@ Copy `.env.example` to `.env` to change anything. All values are optional.
 | `app/src/images.js` | Type detection, rotation and metadata removal, resizing |
 | `app/src/storage.js` | Talks to Floci with the AWS SDK |
 | `app/src/db.js` | SQLite file list (Node's built-in `node:sqlite`) |
+| `app/src/network.js` | Allows only the address ranges in `ALLOWED_NETWORKS` |
 | `app/src/config.js` | Reads settings from environment variables |
 | `app/public/` | The web page |
 
 ## Limits of this demo
 
-- No login. Anyone who can reach the app can see and delete files. File ids are random
-  UUIDs, so links cannot be guessed, but the gallery lists everything.
+- No login. Anyone allowed by `ALLOWED_NETWORKS` can see and delete files. File ids are
+  random UUIDs, so links cannot be guessed, but the gallery lists everything.
 - Floci must stay off the network: its S3 auth checks only the access key id, not the
   signature. Keep the `floci` service without a `ports:` entry.
 - PDFs are stored and served as they are, without previews.

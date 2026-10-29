@@ -2,6 +2,11 @@ import sharp from 'sharp';
 import { fileTypeFromBuffer } from 'file-type';
 import { config } from './config.js';
 
+// libvips keeps decoded images in an in-process cache and runs several threads per image.
+// Both raise memory use far above what a small server should spend, so keep them minimal.
+sharp.cache(false);
+sharp.concurrency(1);
+
 export const ALLOWED_TYPES = {
   'image/jpeg': 'jpg',
   'image/png': 'png',

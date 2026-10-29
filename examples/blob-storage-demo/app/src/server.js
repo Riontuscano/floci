@@ -5,13 +5,15 @@ import { config } from './config.js';
 import { files, pingDb } from './db.js';
 import * as storage from './storage.js';
 import { createLimiter, detectType, isImage, parseVariant, prepareImage, renderVariant } from './images.js';
+import { allowNetworks } from './network.js';
 
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: config.upload.maxFileMb * 1024 * 1024, files: config.upload.maxFilesPerRequest },
 });
 
-const resizeLimiter = createLimiter(config.images.maxConcurrentResizes);
+// Shared by upload processing and resizing: decoding images is the memory-heavy step.
+const imageLimiter = createLimiter(config.images.maxConcurrentResizes);
 const inFlight = new Map();
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -71,11 +73,16 @@ async function storeUpload(file) {
   let image = { width: null, height: null, lqip: null };
   if (isImage(type.mime)) {
     try {
-      image = await prepareImage(file.buffer, type.mime);
+      image = await imageLimiter(() => prepareImage(file.buffer, type.mime));
     } catch (err) {
       throw new HttpError(422, `The image could not be read: ${err.message}`);
     }
     body = image.body;
+  }
+
+  const quota = config.upload.quotaBytes;
+  if (quota > 0 && files.stats().bytes + body.length > quota) {
+    throw new HttpError(507, 'Storage is full. Delete some files or raise STORAGE_QUOTA_GB.');
   }
 
   await storage.putObject(key, body, type.mime);
@@ -108,7 +115,7 @@ async function loadVariant(row, variant) {
     return cached;
   }
   if (!inFlight.has(key)) {
-    const job = resizeLimiter(async () => {
+    const job = imageLimiter(async () => {
       const original = await storage.getObjectBuffer(row.storage_key);
       if (!original) {
         throw new HttpError(404, 'File not found');
@@ -130,6 +137,7 @@ const contentDisposition = (req, name) => {
 
 const app = express();
 app.disable('x-powered-by');
+app.use(allowNetworks(config.allowedNetworks));
 app.use(express.static('public'));
 
 app.get('/api/config', (req, res) => {
@@ -137,6 +145,7 @@ app.get('/api/config', (req, res) => {
     allowedSizes: config.images.allowedSizes,
     maxFileMb: config.upload.maxFileMb,
     maxFilesPerRequest: config.upload.maxFilesPerRequest,
+    quotaBytes: config.upload.quotaBytes,
   });
 });
 
@@ -250,7 +259,12 @@ app.get('/healthz', async (req, res) => {
     checks.storage = err.name ?? err.message;
   }
   const healthy = checks.db === 'ok' && checks.storage === 'ok';
-  res.status(healthy ? 200 : 503).json({ status: healthy ? 'ok' : 'degraded', ...checks, ...files.stats() });
+  res.status(healthy ? 200 : 503).json({
+    status: healthy ? 'ok' : 'degraded',
+    ...checks,
+    ...files.stats(),
+    quotaBytes: config.upload.quotaBytes,
+  });
 });
 
 app.use((err, req, res, next) => {

@@ -314,7 +314,8 @@ async function refreshStatus() {
     const body = await res.json();
     $('health').className = `dot ${res.ok ? 'ok' : 'bad'}`;
     $('health').title = res.ok ? 'App, database and storage are healthy' : `DB: ${body.db}, storage: ${body.storage}`;
-    $('stats').textContent = `${body.count} files, ${formatBytes(body.bytes)}`;
+    const quota = body.quotaBytes ? ` of ${formatBytes(body.quotaBytes)}` : '';
+    $('stats').textContent = `${body.count} files, ${formatBytes(body.bytes)}${quota}`;
   } catch {
     $('health').className = 'dot bad';
     $('stats').textContent = 'App unreachable';

@@ -1,3 +1,10 @@
+# Log rotation for both containers, so logs can never fill the server's disk.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   floci:
     image: floci/floci:2.0.1
@@ -10,12 +17,16 @@ services:
     volumes:
       # A name ("floci-data") is a Docker volume; a path ("/srv/blob/floci") is a host folder.
       - ${FLOCI_DATA:-floci-data}:/app/data
+    # Hard caps so this stack cannot starve other services on the same machine.
+    mem_limit: ${FLOCI_MEMORY:-1g}
+    cpus: ${FLOCI_CPUS:-1.0}
+    logging: *logging
     restart: unless-stopped
 
   app:
     build: ./app
     ports:
-      - "${APP_PORT:-3000}:3000"
+      - "${APP_PORT:-6100}:6100"
     environment:
       S3_ENDPOINT: http://floci:4566
       S3_BUCKET: ${S3_BUCKET:-demo-uploads}
@@ -25,10 +36,15 @@ services:
       DB_PATH: /app/data/files.db
       MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-15}
       MAX_FILES_PER_REQUEST: ${MAX_FILES_PER_REQUEST:-10}
+      STORAGE_QUOTA_GB: ${STORAGE_QUOTA_GB:-0}
+      ALLOWED_NETWORKS: ${ALLOWED_NETWORKS:-}
       ALLOWED_SIZES: ${ALLOWED_SIZES:-160,320,640,1024,1600}
       MAX_CONCURRENT_RESIZES: ${MAX_CONCURRENT_RESIZES:-2}
     volumes:
       - ${APP_DATA:-app-data}:/app/data
+    mem_limit: ${APP_MEMORY:-512m}
+    cpus: ${APP_CPUS:-1.0}
+    logging: *logging
     depends_on:
       floci:
         condition: service_healthy
