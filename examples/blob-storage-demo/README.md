@@ -2,11 +2,13 @@
 
 Upload photos and PDFs, store them in Floci S3, and get a link back. Images can be resized
 through the link, and the page picks a smaller or larger image depending on network speed.
+Every upload and delete is published as an event through Floci SNS and SQS to background
+workers.
 
 ```
 Browser ──> app (Node, port 6100) ──> Floci S3   (file bytes: originals + resized copies)
-                     │
-                     └──> SQLite                 (file list: name, size, type, date)
+                │                ──> Floci SNS ──> Floci SQS queues ──> workers (in the app)
+                └──> SQLite      (file list, outbox, audit log, alerts)
 ```
 
 - The browser never talks to Floci. Floci has no published port.
@@ -34,7 +36,9 @@ To deploy on a server in your network, follow [DEPLOY.md](DEPLOY.md).
 | Gallery | Thumbnails with blurred placeholders, size, dimensions, copy link, open, delete |
 | Resizing through the link | `?w=`, `?h=`, `?fit=`, `?q=`, `?format=` (see below) |
 | Network-aware viewer | Picks low, medium or high quality from the browser's network info |
-| Health check | `GET /healthz` reports app, database and storage status |
+| Events (SNS and SQS) | Uploads and deletes fan out to three queues with background workers. See below |
+| Events page | `/events.html`: queue sizes, worker status, dead letters, alerts, audit log |
+| Health check | `GET /healthz` reports database, storage and messaging status within 3 seconds |
 
 ## Image links
 
@@ -73,6 +77,49 @@ Links never change, so responses carry `Cache-Control: immutable` and an `ETag`.
 
 You can also choose Low, Medium or High by hand, in the page and in the viewer.
 
+## Events: SNS and SQS
+
+```
+upload / delete
+   │  same database transaction
+   ▼
+outbox table ──dispatcher──> SNS topic "file-events" ──┬──> SQS "thumbnails" ──> thumbnail worker
+                                                       ├──> SQS "audit-log"  ──> audit worker
+                                                       └──> SQS "alerts"     ──> alert worker
+                                       each queue has a dead-letter queue: "<name>-dlq"
+```
+
+| Worker | What it does |
+|---|---|
+| `thumbnails` | Creates the gallery thumbnails (`THUMBNAIL_SIZES`, default 320 and 640) right after an image upload, so the first gallery view is instant |
+| `audit-log` | Stores every upload and delete with time, file, size and the uploader's address |
+| `alerts` | Raises an alert when a file is deleted or an upload is larger than `ALERT_LARGE_FILE_MB`. Business rules such as "late check-in" go here |
+
+An event looks like this, and is delivered to each queue as-is (SNS raw message delivery):
+
+```json
+{
+  "id": "6f0d…",
+  "type": "file.uploaded",
+  "time": "2026-10-30T09:02:00.000Z",
+  "data": { "fileId": "3f1c…", "name": "selfie.jpg", "contentType": "image/jpeg", "size": 284113, "clientIp": "192.168.1.57" }
+}
+```
+
+How it stays reliable:
+
+| Problem | Handling |
+|---|---|
+| App crashes or Floci is down right after an upload | The event is saved in the `outbox` table in the same transaction as the file. A dispatcher publishes it when SNS is reachable, so no event is lost |
+| A worker fails on a message | The message is not deleted. It comes back after 5, 10, then 20 seconds |
+| A message keeps failing | After `MAX_RECEIVE_COUNT` attempts (default 3) SQS moves it to the queue's dead-letter queue. "Retry dead letters" on the Events page moves it back |
+| A message is delivered twice (SQS is at-least-once) | Workers are safe to repeat: thumbnails are overwritten, audit entries and alerts are keyed by event id |
+| Floci stops answering | Every call has a timeout, so nothing hangs. Workers keep retrying every 5 seconds |
+| Restarts | Floci stores queues, subscriptions and waiting messages on disk (`wal` mode). The app recreates missing queues and subscriptions on start, without duplicates |
+
+To see a failure handled: on the Events page, click **Send broken message** on a queue. Within
+about 40 seconds it fails 3 times and appears under dead letters.
+
 ## API
 
 | Method and path | Purpose |
@@ -84,6 +131,10 @@ You can also choose Low, Medium or High by hand, in the page and in the viewer.
 | `GET /files/<id>.<ext>?...` | The file link |
 | `GET /healthz` | Status of app, database and storage |
 | `GET /api/config` | Limits and allowed sizes, used by the page |
+| `GET /api/messaging` | Queue sizes, dead letters, worker and outbox status |
+| `GET /api/events?limit=50` | Recent audit log entries and alerts |
+| `POST /api/queues/<thumbnails\|audit\|alerts>/redrive` | Move dead-letter messages back to the queue |
+| `POST /api/queues/<thumbnails\|audit\|alerts>/test-failure` | Send an unreadable message, to watch retries and the dead-letter queue |
 
 Upload from the command line:
 
@@ -109,6 +160,9 @@ Copy `.env.example` to `.env` to change anything. All values are optional.
 | `MAX_CONCURRENT_RESIZES` | `2` | Images processed at the same time (uploads and resizes) |
 | `FLOCI_MEMORY`, `APP_MEMORY` | `1g`, `512m` | Hard memory caps per container |
 | `FLOCI_CPUS`, `APP_CPUS` | `1.0`, `1.0` | CPU caps per container |
+| `THUMBNAIL_SIZES` | `320,640` | Square thumbnails the worker creates after each image upload |
+| `MAX_RECEIVE_COUNT` | `3` | Attempts before a message moves to the dead-letter queue |
+| `ALERT_LARGE_FILE_MB` | `5` | Uploads above this size raise an alert |
 
 Both containers also rotate their logs (3 files of 10 MB each), so logs cannot fill the disk.
 
@@ -121,8 +175,12 @@ Both containers also rotate their logs (3 files of 10 MB each), so logs cannot f
 | `app/src/storage.js` | Talks to Floci with the AWS SDK |
 | `app/src/db.js` | SQLite file list (Node's built-in `node:sqlite`) |
 | `app/src/network.js` | Allows only the address ranges in `ALLOWED_NETWORKS` |
+| `app/src/messaging.js` | Creates the SNS topic, SQS queues, dead-letter queues and subscriptions; publish, receive, redrive |
+| `app/src/outbox.js` | Publishes saved events to SNS |
+| `app/src/workers.js` | The three queue workers and their retry handling |
+| `app/src/variants.js` | Creates and caches resized images, shared by routes and the thumbnail worker |
 | `app/src/config.js` | Reads settings from environment variables |
-| `app/public/` | The web page |
+| `app/public/` | The Files page (`index.html`) and the Events page (`events.html`) |
 
 ## Limits of this demo
 

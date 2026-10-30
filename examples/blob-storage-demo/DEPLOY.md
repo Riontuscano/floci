@@ -284,6 +284,28 @@ docker compose stop && sudo rsync -a /mnt/usb/blob-backup/ /srv/blob/ && docker 
 All commands run inside the demo folder affect only this demo's two containers
 (`blob-storage-demo-app-1` and `blob-storage-demo-floci-1`), never your other containers.
 
+## Updating to a new version
+
+Run inside the demo folder. Your files, database and `.env` are kept.
+
+```bash
+git pull
+```
+
+```bash
+docker compose up -d --build
+```
+
+The app is unavailable for about 30 seconds while the containers are replaced. New database
+tables, queues and subscriptions are created automatically on start. Check afterwards:
+
+```bash
+docker compose ps
+```
+
+The **Events** page (`http://192.168.1.206:6100/events.html`) shows the SNS topic, the three
+SQS queues and their workers.
+
 ## Remove the demo completely
 
 ```bash

@@ -39,4 +39,20 @@ export const config = {
     originalQuality: int('ORIGINAL_QUALITY', 90),
     maxConcurrentResizes: int('MAX_CONCURRENT_RESIZES', 2),
   },
+
+  events: {
+    topicName: process.env.EVENTS_TOPIC ?? 'file-events',
+    queues: {
+      thumbnails: process.env.THUMBNAILS_QUEUE ?? 'thumbnails',
+      audit: process.env.AUDIT_QUEUE ?? 'audit-log',
+      alerts: process.env.ALERTS_QUEUE ?? 'alerts',
+    },
+    // A message that fails this many times moves to the queue's dead-letter queue.
+    maxReceiveCount: int('MAX_RECEIVE_COUNT', 3),
+    // Seconds a received message stays hidden from other workers while it is processed.
+    visibilityTimeoutSeconds: int('VISIBILITY_TIMEOUT_SECONDS', 60),
+    // Square thumbnail sizes generated in the background after each image upload.
+    thumbnailSizes: list('THUMBNAIL_SIZES', '320,640'),
+    alertLargeFileMb: int('ALERT_LARGE_FILE_MB', 5),
+  },
 };

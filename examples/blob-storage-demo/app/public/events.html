@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Floci Events</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Events</h1>
+      <p class="muted">Uploads and deletes are published to the SNS topic <code id="topic">file-events</code>,
+        which copies each event into three SQS queues. A worker reads each queue.</p>
+    </div>
+    <nav class="nav">
+      <a href="/">Files</a>
+      <a href="/events.html" class="active">Events</a>
+    </nav>
+  </header>
+
+  <section class="panel flow">
+    <div class="flow-step"><strong>App</strong><span class="muted">upload / delete</span></div>
+    <span class="arrow">→</span>
+    <div class="flow-step"><strong>Outbox</strong><span id="outbox" class="muted">-</span></div>
+    <span class="arrow">→</span>
+    <div class="flow-step"><strong>SNS topic</strong><span id="published" class="muted">-</span></div>
+    <span class="arrow">→</span>
+    <div class="flow-step"><strong>3 SQS queues</strong><span class="muted">one copy each</span></div>
+  </section>
+
+  <section>
+    <h2>Queues and workers</h2>
+    <div id="queues" class="queues"></div>
+    <p class="muted small">Waiting: not picked up yet. In progress: taken by a worker, hidden from others.
+      Dead letters: failed <span id="max-receive">3</span> times and parked for inspection.</p>
+  </section>
+
+  <section class="two-col">
+    <div>
+      <h2>Alerts</h2>
+      <ul id="alerts" class="alerts"></ul>
+    </div>
+    <div>
+      <h2>Audit log</h2>
+      <table class="log">
+        <thead><tr><th>Time</th><th>Event</th><th>File</th><th>Size</th><th>From</th></tr></thead>
+        <tbody id="events"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <div id="toast" class="toast" hidden></div>
+  <script src="events.js" type="module"></script>
+</body>
+</html>

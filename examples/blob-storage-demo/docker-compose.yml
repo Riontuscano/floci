@@ -13,6 +13,10 @@ services:
     environment:
       FLOCI_STORAGE_MODE: memory
       FLOCI_STORAGE_SERVICES_S3_MODE: wal
+      FLOCI_STORAGE_SERVICES_SQS_MODE: wal
+      FLOCI_STORAGE_SERVICES_SNS_MODE: wal
+      # Queue URLs returned by Floci use this name, which the app container can resolve.
+      FLOCI_HOSTNAME: floci
       FLOCI_STORAGE_PERSISTENT_PATH: /app/data
     volumes:
       # A name ("floci-data") is a Docker volume; a path ("/srv/blob/floci") is a host folder.
@@ -40,6 +44,9 @@ services:
       ALLOWED_NETWORKS: ${ALLOWED_NETWORKS:-}
       ALLOWED_SIZES: ${ALLOWED_SIZES:-160,320,640,1024,1600}
       MAX_CONCURRENT_RESIZES: ${MAX_CONCURRENT_RESIZES:-2}
+      THUMBNAIL_SIZES: ${THUMBNAIL_SIZES:-320,640}
+      MAX_RECEIVE_COUNT: ${MAX_RECEIVE_COUNT:-3}
+      ALERT_LARGE_FILE_MB: ${ALERT_LARGE_FILE_MB:-5}
     volumes:
       - ${APP_DATA:-app-data}:/app/data
     mem_limit: ${APP_MEMORY:-512m}

@@ -2,29 +2,23 @@ import { randomUUID } from 'node:crypto';
 import express from 'express';
 import multer from 'multer';
 import { config } from './config.js';
-import { files, pingDb } from './db.js';
+import { alerts, auditLog, files, pingDb } from './db.js';
+import { HttpError } from './errors.js';
 import * as storage from './storage.js';
-import { createLimiter, detectType, isImage, parseVariant, prepareImage, renderVariant } from './images.js';
+import { detectType, isImage, parseVariant, prepareImage } from './images.js';
+import * as messaging from './messaging.js';
 import { allowNetworks } from './network.js';
+import { startOutboxDispatcher } from './outbox.js';
+import { imageLimiter, loadVariant } from './variants.js';
+import { startWorkers, stopWorkers, workerStats } from './workers.js';
 
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: config.upload.maxFileMb * 1024 * 1024, files: config.upload.maxFilesPerRequest },
 });
 
-// Shared by upload processing and resizing: decoding images is the memory-heavy step.
-const imageLimiter = createLimiter(config.images.maxConcurrentResizes);
-const inFlight = new Map();
-
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const IMMUTABLE = 'public, max-age=31536000, immutable';
-
-class HttpError extends Error {
-  constructor(status, message) {
-    super(message);
-    this.status = status;
-  }
-}
 
 /** Accepts "uuid" or "uuid.ext" so links keep a readable extension. */
 const parseId = (raw) => {
@@ -33,6 +27,20 @@ const parseId = (raw) => {
 };
 
 const extOf = (key) => key.slice(key.lastIndexOf('.') + 1);
+const clientIp = (req) => (req.socket.remoteAddress ?? '').replace(/^::ffff:/, '');
+
+const newEvent = (type, row, ip) => ({
+  id: randomUUID(),
+  type,
+  time: new Date().toISOString(),
+  data: {
+    fileId: row.id,
+    name: row.original_name,
+    contentType: row.content_type,
+    size: row.size,
+    clientIp: ip,
+  },
+});
 const baseUrl = (req) => `${req.protocol}://${req.get('host')}`;
 
 const toDto = (row, req) => {
@@ -61,7 +69,7 @@ const decodeCursor = (value) => {
   }
 };
 
-async function storeUpload(file) {
+async function storeUpload(file, ip) {
   const type = await detectType(file.buffer);
   if (!type) {
     throw new HttpError(415, 'Only JPEG, PNG, WEBP and PDF files are accepted.');
@@ -98,35 +106,13 @@ async function storeUpload(file) {
     created_at: new Date().toISOString(),
   };
   try {
-    files.insert(row);
+    files.insertWithEvent(row, newEvent('file.uploaded', row, ip));
   } catch (err) {
     await storage.deleteKeys([key]).catch((cleanupErr) =>
       console.error(`Failed to remove orphaned object ${key}`, cleanupErr));
     throw err;
   }
   return row;
-}
-
-/** Returns the variant bytes, creating and caching them in storage on first request. */
-async function loadVariant(row, variant) {
-  const key = `variants/${row.id}/${variant.name}`;
-  const cached = await storage.getObjectBuffer(key);
-  if (cached) {
-    return cached;
-  }
-  if (!inFlight.has(key)) {
-    const job = imageLimiter(async () => {
-      const original = await storage.getObjectBuffer(row.storage_key);
-      if (!original) {
-        throw new HttpError(404, 'File not found');
-      }
-      const rendered = await renderVariant(original, variant);
-      await storage.putObject(key, rendered, variant.contentType);
-      return rendered;
-    }).finally(() => inFlight.delete(key));
-    inFlight.set(key, job);
-  }
-  return inFlight.get(key);
 }
 
 const contentDisposition = (req, name) => {
@@ -158,13 +144,16 @@ app.post('/api/files', upload.array('files'), async (req, res) => {
   const errors = [];
   for (const file of req.files) {
     try {
-      stored.push(toDto(await storeUpload(file), req));
+      stored.push(toDto(await storeUpload(file, clientIp(req)), req));
     } catch (err) {
       if (!(err instanceof HttpError)) {
         console.error(`Upload of ${file.originalname} failed`, err);
       }
       errors.push({ name: file.originalname, error: err instanceof HttpError ? err.message : 'Storage error' });
     }
+  }
+  if (stored.length > 0) {
+    dispatcher.kick();
   }
   res.status(stored.length > 0 ? 201 : 400).json({ files: stored, errors });
 });
@@ -201,7 +190,8 @@ app.delete('/api/files/:id', async (req, res) => {
   }
   await storage.deleteKeys([row.storage_key]);
   await storage.deletePrefix(`variants/${row.id}/`);
-  files.delete(row.id);
+  files.deleteWithEvent(row.id, newEvent('file.deleted', row, clientIp(req)));
+  dispatcher.kick();
   res.status(204).end();
 });
 
@@ -246,24 +236,59 @@ app.get('/files/:id', async (req, res) => {
   obj.body.pipe(res);
 });
 
+const queueKey = (req) => {
+  if (!Object.hasOwn(messaging.queues, req.params.key)) {
+    throw new HttpError(404, 'Unknown queue');
+  }
+  return req.params.key;
+};
+
+app.get('/api/messaging', async (req, res) => {
+  res.json({
+    topic: config.events.topicName,
+    queues: await messaging.queueStats(),
+    workers: workerStats,
+    outbox: { pending: dispatcher.pending(), ...dispatcher.stats },
+    maxReceiveCount: config.events.maxReceiveCount,
+  });
+});
+
+app.get('/api/events', (req, res) => {
+  const limit = Math.min(200, Math.max(1, Number.parseInt(req.query.limit, 10) || 50));
+  res.json({ events: auditLog.recent(limit), alerts: alerts.recent(limit) });
+});
+
+app.post('/api/queues/:key/redrive', async (req, res) => {
+  res.json({ moved: await messaging.redrive(queueKey(req)) });
+});
+
+// Sends a message the worker cannot parse, to watch retries and the dead-letter queue work.
+app.post('/api/queues/:key/test-failure', async (req, res) => {
+  const key = queueKey(req);
+  await messaging.sendRaw(messaging.queues[key].url, 'this is not valid JSON (test message)');
+  res.status(202).json({ sent: true, queue: messaging.queues[key].name });
+});
+
+/** Resolves to "ok" or a short error, never taking longer than ms. */
+const check = (work, ms = 3000) => Promise.race([
+  Promise.resolve().then(work).then(() => 'ok', (err) => err.name ?? err.message),
+  new Promise((resolve) => setTimeout(() => resolve('timeout'), ms).unref()),
+]);
+
 app.get('/healthz', async (req, res) => {
-  const checks = { db: 'ok', storage: 'ok' };
-  try {
-    pingDb();
-  } catch (err) {
-    checks.db = err.message;
-  }
-  try {
-    await storage.pingStorage();
-  } catch (err) {
-    checks.storage = err.name ?? err.message;
-  }
-  const healthy = checks.db === 'ok' && checks.storage === 'ok';
+  const [db, storageStatus, messagingStatus] = await Promise.all([
+    check(pingDb),
+    check(storage.pingStorage),
+    check(messaging.pingMessaging),
+  ]);
+  const checks = { db, storage: storageStatus, messaging: messagingStatus };
+  const healthy = Object.values(checks).every((v) => v === 'ok');
   res.status(healthy ? 200 : 503).json({
     status: healthy ? 'ok' : 'degraded',
     ...checks,
     ...files.stats(),
     quotaBytes: config.upload.quotaBytes,
+    pendingEvents: dispatcher.pending(),
   });
 });
 
@@ -285,4 +310,19 @@ app.use((err, req, res, next) => {
 });
 
 await storage.ensureBucket();
-app.listen(config.port, () => console.log(`Demo running on port ${config.port}`));
+await messaging.setupMessaging();
+const dispatcher = startOutboxDispatcher();
+startWorkers();
+const server = app.listen(config.port, () => console.log(`Demo running on port ${config.port}`));
+
+// docker stop sends SIGTERM. Stop taking work and exit; messages being processed right now
+// were not deleted, so SQS hands them out again after the visibility timeout.
+for (const signal of ['SIGTERM', 'SIGINT']) {
+  process.on(signal, () => {
+    console.log(`${signal} received, shutting down`);
+    stopWorkers();
+    dispatcher.stop();
+    server.close();
+    setTimeout(() => process.exit(0), 2000).unref();
+  });
+}

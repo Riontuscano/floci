@@ -13,6 +13,8 @@ const s3 = new S3Client({
   endpoint: config.s3.endpoint,
   region: config.s3.region,
   forcePathStyle: true,
+  // Idle timeout rather than a total limit, so large downloads to slow clients are not cut off.
+  requestHandler: { connectionTimeout: 5000, socketTimeout: 30000 },
 });
 
 const Bucket = config.s3.bucket;
