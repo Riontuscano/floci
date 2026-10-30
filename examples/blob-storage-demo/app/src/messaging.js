@@ -11,6 +11,7 @@ import {
   CreateQueueCommand,
   DeleteMessageCommand,
   GetQueueAttributesCommand,
+  PurgeQueueCommand,
   ReceiveMessageCommand,
   SendMessageCommand,
   SetQueueAttributesCommand,
@@ -174,6 +175,10 @@ export async function redrive(key) {
     }
   }
   return moved;
+}
+
+export async function purgeDeadLetters(key) {
+  await sqs.send(new PurgeQueueCommand({ QueueUrl: queues[key].dlqUrl }));
 }
 
 export async function pingMessaging() {

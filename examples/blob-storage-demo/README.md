@@ -117,8 +117,9 @@ How it stays reliable:
 | Floci stops answering | Every call has a timeout, so nothing hangs. Workers keep retrying every 5 seconds |
 | Restarts | Floci stores queues, subscriptions and waiting messages on disk (`wal` mode). The app recreates missing queues and subscriptions on start, without duplicates |
 
-To see a failure handled: on the Events page, click **Send broken message** on a queue. Within
-about 40 seconds it fails 3 times and appears under dead letters.
+On the Events page, **Retry dead letters** sends parked messages back to their queue (for
+example after fixing a bug), and **Clear dead letters** permanently discards messages that can
+never succeed.
 
 ## API
 
@@ -134,7 +135,7 @@ about 40 seconds it fails 3 times and appears under dead letters.
 | `GET /api/messaging` | Queue sizes, dead letters, worker and outbox status |
 | `GET /api/events?limit=50` | Recent audit log entries and alerts |
 | `POST /api/queues/<thumbnails\|audit\|alerts>/redrive` | Move dead-letter messages back to the queue |
-| `POST /api/queues/<thumbnails\|audit\|alerts>/test-failure` | Send an unreadable message, to watch retries and the dead-letter queue |
+| `POST /api/queues/<thumbnails\|audit\|alerts>/purge-dead-letters` | Permanently discard a queue's dead-letter messages |
 
 Upload from the command line:
 

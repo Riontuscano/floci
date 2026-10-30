@@ -262,11 +262,10 @@ app.post('/api/queues/:key/redrive', async (req, res) => {
   res.json({ moved: await messaging.redrive(queueKey(req)) });
 });
 
-// Sends a message the worker cannot parse, to watch retries and the dead-letter queue work.
-app.post('/api/queues/:key/test-failure', async (req, res) => {
-  const key = queueKey(req);
-  await messaging.sendRaw(messaging.queues[key].url, 'this is not valid JSON (test message)');
-  res.status(202).json({ sent: true, queue: messaging.queues[key].name });
+// Discards everything in a queue's dead-letter queue, for messages that can never succeed.
+app.post('/api/queues/:key/purge-dead-letters', async (req, res) => {
+  await messaging.purgeDeadLetters(queueKey(req));
+  res.json({ purged: true });
 });
 
 /** Resolves to "ok" or a short error, never taking longer than ms. */

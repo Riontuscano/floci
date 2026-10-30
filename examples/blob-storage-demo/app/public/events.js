@@ -45,14 +45,24 @@ function stat(label, value, className = '') {
 }
 
 function queueCard(key, queue, worker) {
-  const testButton = el('button', { textContent: 'Send broken message', title: 'Watch it retry, then move to the dead-letter queue' });
-  testButton.addEventListener('click', async () => {
-    await post(`/api/queues/${key}/test-failure`);
-    toast(`Broken message sent to ${queue.name}. Watch it retry, then land in dead letters.`);
+  const purgeButton = el('button', {
+    className: 'danger',
+    textContent: 'Clear dead letters',
+    disabled: queue.deadLetters === 0,
+    title: 'Permanently discard messages that cannot be processed',
+  });
+  purgeButton.addEventListener('click', async () => {
+    if (!confirm(`Permanently discard ${queue.deadLetters} dead letter(s) in ${queue.name}?`)) return;
+    await post(`/api/queues/${key}/purge-dead-letters`);
+    toast(`Dead letters in ${queue.name} cleared`);
     refresh();
   });
 
-  const redriveButton = el('button', { textContent: 'Retry dead letters', disabled: queue.deadLetters === 0 });
+  const redriveButton = el('button', {
+    textContent: 'Retry dead letters',
+    disabled: queue.deadLetters === 0,
+    title: 'Send them back to the queue, e.g. after fixing a bug',
+  });
   redriveButton.addEventListener('click', async () => {
     const { moved } = await post(`/api/queues/${key}/redrive`);
     toast(`Moved ${moved} message(s) back to ${queue.name}`);
@@ -73,7 +83,7 @@ function queueCard(key, queue, worker) {
     ]),
     el('p', { className: 'muted small', textContent: `Worker: ${worker?.processed ?? 0} done, ${worker?.failed ?? 0} failed attempts, ${lastPoll}` }),
     worker?.lastError ? el('p', { className: 'error small', textContent: `Last error: ${worker.lastError}` }) : '',
-    el('div', { className: 'actions' }, [testButton, redriveButton]),
+    el('div', { className: 'actions' }, [redriveButton, purgeButton]),
   ]);
 }
 
