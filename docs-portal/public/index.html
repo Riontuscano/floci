@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Floci Integration Docs</title>
+  <meta name="description" content="How to add Floci, the local AWS emulator, to your own applications.">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <button class="menu-toggle" id="menu-toggle" aria-label="Toggle navigation" aria-expanded="false">
+      <span></span><span></span><span></span>
+    </button>
+    <a class="brand" href="#/docs/introduction">
+      <img class="logo logo-light" src="/logo-light.svg" alt="Floci" width="95" height="28">
+      <img class="logo logo-dark" src="/logo-dark.svg" alt="Floci" width="95" height="28">
+      <span class="brand-tag">Integration Docs</span>
+    </a>
+    <div class="search">
+      <input id="search" type="search" placeholder="Search guides  ( / )" autocomplete="off" aria-label="Search guides">
+      <div id="search-results" class="search-results" hidden></div>
+    </div>
+    <button id="status" class="status" title="Live status of the configured Floci instance">
+      <span class="dot"></span><span class="status-text">checking</span>
+    </button>
+    <button id="theme-toggle" class="icon-btn" aria-label="Toggle theme" title="Toggle theme">&#9790;</button>
+  </header>
+
+  <div class="layout">
+    <nav id="sidebar" class="sidebar" aria-label="Guides"></nav>
+    <main id="content" class="content" tabindex="-1">
+      <div class="loading">Loading documentation...</div>
+    </main>
+    <aside class="toc" aria-label="On this page">
+      <div id="toc"></div>
+      <div id="connection" class="connection-card" hidden></div>
+    </aside>
+  </div>
+
+  <script src="/app.js" type="module"></script>
+</body>
+</html>
